@@ -53,18 +53,19 @@
     frame.addEventListener("load", () => {
       iframeLoaded = true;
       if (loadingText) loadingText.textContent = "Aplikasi siap";
-      window.setTimeout(hideSplash, 60);
+
+      // V11.8.41:
+      // jangan hilangkan splash sebelum iframe benar-benar selesai load.
+      // Tunggu dua paint frame + jeda kecil agar tidak ada flash putih.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.setTimeout(hideSplash, 90);
+        });
+      });
+
       loadPushBridgeLater();
     });
   }
-
-  /*
-   * iframe "load" dapat lebih lambat dari first visual paint.
-   * Jangan tahan pengguna terlalu lama di splash.
-   */
-  window.setTimeout(() => {
-    hideSplash();
-  }, 1200);
 
   // Fallback: tetap muat bridge secara non-kritis jika iframe load event lambat.
   window.setTimeout(() => {
