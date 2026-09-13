@@ -249,6 +249,110 @@
     return subscription;
   }
 
+
+  /* =========================================================
+     V11.8.35 — TOP-LEVEL PUSH PERMISSION PROMPT
+     Notification permission must be requested from the Netlify
+     top-level page on a real user click. The Apps Script UI lives
+     inside a cross-origin iframe, so it asks this parent bridge.
+     Existing PWA shell, service worker, routes and subscription
+     storage are otherwise unchanged.
+  ========================================================= */
+
+  let outingPushPermissionPromptOpen = false;
+
+  function closeOutingPushPermissionPrompt() {
+    const layer = document.getElementById("outingPushPermissionPromptV11835");
+    if (layer) layer.remove();
+    outingPushPermissionPromptOpen = false;
+  }
+
+  function showOutingPushPermissionPrompt({ onAllow, onCancel }) {
+    if (outingPushPermissionPromptOpen) return;
+    outingPushPermissionPromptOpen = true;
+
+    const layer = document.createElement("div");
+    layer.id = "outingPushPermissionPromptV11835";
+    layer.setAttribute("role", "dialog");
+    layer.setAttribute("aria-modal", "true");
+    layer.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;" +
+      "padding:20px;background:rgba(9,24,38,.48);font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+
+    layer.innerHTML =
+      '<div style="width:min(420px,100%);background:#fff;border-radius:22px;padding:22px;' +
+      'box-shadow:0 20px 60px rgba(9,24,38,.24);color:#17324D">' +
+        '<div style="font-size:1rem;font-weight:800;line-height:1.3">Aktifkan Notifikasi HP</div>' +
+        '<div style="margin-top:8px;font-size:.86rem;line-height:1.55;color:#607487">' +
+          'Izinkan notifikasi agar informasi penting Outing BMS 2026 dapat muncul di Lock Screen atau Notification Center.' +
+        '</div>' +
+        '<div id="outingPushPermissionStatusV11835" style="min-height:18px;margin-top:10px;font-size:.76rem;line-height:1.4;color:#7A8996"></div>' +
+        '<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px">' +
+          '<button id="outingPushLaterV11835" type="button" style="border:1px solid #D9E2E9;background:#fff;color:#516779;' +
+            'border-radius:11px;padding:10px 14px;font-weight:700;cursor:pointer">NANTI</button>' +
+          '<button id="outingPushAllowV11835" type="button" style="border:0;background:#173F67;color:#fff;' +
+            'border-radius:11px;padding:10px 16px;font-weight:800;cursor:pointer">IZINKAN</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(layer);
+
+    const allow = document.getElementById("outingPushAllowV11835");
+    const later = document.getElementById("outingPushLaterV11835");
+    const status = document.getElementById("outingPushPermissionStatusV11835");
+    let busy = false;
+
+    later?.addEventListener("click", () => {
+      if (busy) return;
+      closeOutingPushPermissionPrompt();
+      onCancel?.("Aktivasi notifikasi dibatalkan.");
+    });
+
+    allow?.addEventListener("click", async () => {
+      if (busy) return;
+      busy = true;
+      if (allow) {
+        allow.disabled = true;
+        allow.textContent = "MEMPROSES…";
+      }
+      if (later) later.disabled = true;
+      if (status) status.textContent = "Meminta izin notifikasi…";
+
+      try {
+        if (typeof Notification === "undefined") {
+          throw new Error("Notification API belum didukung browser ini.");
+        }
+
+        let permission = Notification.permission;
+        if (permission === "default") {
+          // IMPORTANT: called directly inside this top-level button click.
+          permission = await Notification.requestPermission();
+        }
+
+        if (permission !== "granted") {
+          throw new Error(
+            permission === "denied"
+              ? "Izin notifikasi diblokir. Aktifkan kembali dari pengaturan browser/perangkat."
+              : "Izin notifikasi belum diberikan."
+          );
+        }
+
+        if (status) status.textContent = "Mendaftarkan perangkat…";
+        await onAllow?.();
+        closeOutingPushPermissionPrompt();
+      } catch (error) {
+        const message = String(error?.message || error || "Gagal mengaktifkan notifikasi.");
+        if (status) status.textContent = message;
+        if (allow) {
+          allow.disabled = false;
+          allow.textContent = "COBA LAGI";
+        }
+        if (later) later.disabled = false;
+        busy = false;
+      }
+    });
+  }
+
   function normalizePushOpen(data) {
     const payload = data?.payload || data || {};
     const normalized = {
@@ -312,46 +416,85 @@
     }
 
     if (data.type === "OUTING_PUSH_SUBSCRIBE") {
-      try {
-        let subscription;
-
-        /*
-         * Variant A — current V11.8.24 package:
-         * iframe sends workerUrl + token + userKey.
-         * Netlify creates browser subscription and saves it to Cloudflare.
-         */
-        if (data.workerUrl || data.token || data.userKey) {
-          subscription = await subscribeDirectToWorker(data);
-
-          replyToFrame(event, {
-            type: "OUTING_PUSH_SUBSCRIBE_RESULT",
-            requestId: data.requestId || "",
-            ok: true,
-            subscription: subscription.toJSON(),
-          });
-          return;
-        }
-
-        /*
-         * Variant B — compatible newer bridge:
-         * iframe sends publicKey directly, then Apps Script may persist
-         * the returned subscription itself.
-         */
-        subscription = await ensureSubscription(data.publicKey);
-
+      const replySuccess = (subscription) => {
         replyToFrame(event, {
           type: "OUTING_PUSH_SUBSCRIBE_RESULT",
           requestId: data.requestId || "",
           ok: true,
-          subscription: subscription.toJSON(),
+          subscription: subscription?.toJSON ? subscription.toJSON() : subscription || null,
         });
-      } catch (error) {
+      };
+
+      const replyFailure = (error) => {
         replyToFrame(event, {
           type: "OUTING_PUSH_SUBSCRIBE_RESULT",
           requestId: data.requestId || "",
           ok: false,
-          error: String(error?.message || error),
+          error: String(error?.message || error || "Gagal mengaktifkan notifikasi HP."),
         });
+      };
+
+      try {
+        /*
+         * Variant A — Apps Script sends Netlify API URL + signed token + userKey.
+         * Registration itself still uses the existing Netlify Functions endpoints.
+         */
+        if (data.workerUrl || data.token || data.userKey) {
+          if (typeof Notification === "undefined") {
+            throw new Error("Notification API belum didukung browser ini.");
+          }
+
+          if (Notification.permission === "denied") {
+            throw new Error(
+              "Izin notifikasi diblokir. Aktifkan kembali dari pengaturan browser/perangkat."
+            );
+          }
+
+          const runDirectSubscription = async () => {
+            const subscription = await subscribeDirectToWorker(data);
+            replySuccess(subscription);
+          };
+
+          if (Notification.permission === "default") {
+            /*
+             * Do NOT call requestPermission() from the cross-origin iframe message.
+             * Show a top-level Netlify button, then request permission on that click.
+             */
+            showOutingPushPermissionPrompt({
+              onAllow: runDirectSubscription,
+              onCancel: (message) => replyFailure(new Error(message)),
+            });
+            return;
+          }
+
+          await runDirectSubscription();
+          return;
+        }
+
+        /*
+         * Variant B — compatible publicKey bridge.
+         * If permission is still default, use the same top-level prompt.
+         */
+        if (typeof Notification === "undefined") {
+          throw new Error("Notification API belum didukung browser ini.");
+        }
+
+        const runPublicKeySubscription = async () => {
+          const subscription = await ensureSubscription(data.publicKey);
+          replySuccess(subscription);
+        };
+
+        if (Notification.permission === "default") {
+          showOutingPushPermissionPrompt({
+            onAllow: runPublicKeySubscription,
+            onCancel: (message) => replyFailure(new Error(message)),
+          });
+          return;
+        }
+
+        await runPublicKeySubscription();
+      } catch (error) {
+        replyFailure(error);
       }
       return;
     }
