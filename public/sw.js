@@ -1,4 +1,4 @@
-const CACHE_NAME = "outing-bms-netlify-shell-v4";
+const CACHE_NAME = "outing-bms-netlify-shell-v4-restore-11836";
 const PRECACHE = [
   "/",
   "/styles-v4.css",
