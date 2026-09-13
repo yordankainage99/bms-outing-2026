@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#17324D">
+  <title>Aktifkan Notifikasi — Outing BMS 2026</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#F4F7FB;color:#17324D}
+    body{min-height:100vh;display:grid;place-items:center;padding:20px}
+    .card{width:min(430px,100%);background:#fff;border:1px solid #E0E8EF;border-radius:22px;padding:24px;box-shadow:0 14px 40px rgba(23,50,77,.10)}
+    .mark{width:48px;height:48px;border-radius:15px;background:#EEF4F9;display:grid;place-items:center;margin-bottom:16px}
+    .mark svg{width:24px;height:24px;fill:none;stroke:#173F67;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    h1{font-size:1.05rem;line-height:1.3;margin:0}
+    p{font-size:.84rem;line-height:1.55;color:#607487;margin:9px 0 0}
+    .status{min-height:22px;margin-top:13px;font-size:.78rem;line-height:1.45;color:#6A7D8D}
+    .status.error{color:#A83232}
+    .status.ok{color:#2A6B4C}
+    .actions{display:flex;gap:9px;justify-content:flex-end;margin-top:18px}
+    button{border:0;border-radius:11px;padding:10px 15px;font-weight:800;font-size:.78rem;cursor:pointer}
+    button.primary{background:#173F67;color:#fff}
+    button.secondary{background:#fff;border:1px solid #D8E2EA;color:#607487}
+    button:disabled{opacity:.6;cursor:default}
+    .hidden{display:none!important}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+    </div>
+
+    <h1>Aktifkan Notifikasi HP</h1>
+    <p id="copy">Menyiapkan aktivasi notifikasi…</p>
+    <div id="status" class="status">Mohon tunggu.</div>
+
+    <div class="actions">
+      <button id="closeBtn" class="secondary" type="button">TUTUP</button>
+      <button id="allowBtn" class="primary hidden" type="button">IZINKAN</button>
+    </div>
+  </main>
+
+<script>
+(() => {
+  "use strict";
+
+  const statusEl = document.getElementById("status");
+  const copyEl = document.getElementById("copy");
+  const allowBtn = document.getElementById("allowBtn");
+  const closeBtn = document.getElementById("closeBtn");
+
+  let payload = null;
+
+  function setStatus(text, type) {
+    statusEl.textContent = String(text || "");
+    statusEl.className = "status" + (type ? " " + type : "");
+  }
+
+  function notifyOpener(ok, error) {
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          type: "OUTING_PUSH_ACTIVATE_RESULT",
+          ok: !!ok,
+          error: String(error || "")
+        }, "*");
+      }
+    } catch (_) {}
+  }
+
+  function decodePayload() {
+    const hash = String(location.hash || "");
+    if (!hash.startsWith("#data=")) return null;
+
+    try {
+      const raw = decodeURIComponent(hash.slice(6));
+      const data = JSON.parse(raw);
+
+      if (!data || !data.token || !data.userKey || !data.workerUrl) {
+        throw new Error("Data aktivasi tidak lengkap.");
+      }
+
+      const workerUrl = new URL(String(data.workerUrl));
+      if (workerUrl.protocol !== "https:") {
+        throw new Error("URL Push tidak valid.");
+      }
+
+      // Production Outing Push is intentionally limited to this Netlify origin.
+      if (workerUrl.origin !== location.origin) {
+        throw new Error("Origin Push tidak sesuai.");
+      }
+
+      return {
+        token: String(data.token),
+        userKey: String(data.userKey),
+        workerUrl: workerUrl.origin
+      };
+    } catch (e) {
+      setStatus(e.message || "Data aktivasi tidak valid.", "error");
+      return null;
+    }
+  }
+
+  function b64ToUint8(value) {
+    const source = String(value || "");
+    const padding = "=".repeat((4 - (source.length % 4)) % 4);
+    const base64 = (source + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  }
+
+  async function getRegistration() {
+    if (!("serviceWorker" in navigator)) {
+      throw new Error("Service Worker tidak didukung browser ini.");
+    }
+    if (!("PushManager" in window)) {
+      throw new Error("Web Push tidak didukung browser ini.");
+    }
+
+    let registration = await navigator.serviceWorker.getRegistration("/");
+    if (!registration) {
+      registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    }
+
+    await navigator.serviceWorker.ready;
+    return registration;
+  }
+
+  async function activate() {
+    if (!payload) return;
+
+    allowBtn.disabled = true;
+    closeBtn.disabled = true;
+    setStatus("Meminta izin notifikasi…");
+
+    try {
+      if (typeof Notification === "undefined") {
+        throw new Error("Notification API tidak tersedia.");
+      }
+
+      let permission = Notification.permission;
+      if (permission === "default") {
+        // Called directly from this top-level button click.
+        permission = await Notification.requestPermission();
+      }
+
+      if (permission !== "granted") {
+        throw new Error(
+          permission === "denied"
+            ? "Izin notifikasi diblokir. Aktifkan kembali dari pengaturan browser/perangkat."
+            : "Izin notifikasi belum diberikan."
+        );
+      }
+
+      setStatus("Menyiapkan perangkat…");
+
+      const keyResponse = await fetch(payload.workerUrl + "/api/push/public-key", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "omit"
+      });
+
+      const keyData = await keyResponse.json();
+      if (!keyResponse.ok || !keyData || !keyData.ok || !keyData.publicKey) {
+        throw new Error((keyData && keyData.error) || "VAPID public key belum tersedia.");
+      }
+
+      const registration = await getRegistration();
+      let subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64ToUint8(keyData.publicKey)
+        });
+      }
+
+      setStatus("Menyimpan perangkat…");
+
+      const saveResponse = await fetch(payload.workerUrl + "/api/push/subscribe", {
+        method: "POST",
+        credentials: "omit",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: payload.token,
+          userKey: payload.userKey,
+          subscription: subscription.toJSON()
+        })
+      });
+
+      const saveData = await saveResponse.json();
+      if (!saveResponse.ok || !saveData || !saveData.ok) {
+        throw new Error((saveData && saveData.error) || "Gagal menyimpan Push Subscription.");
+      }
+
+      setStatus("Notifikasi HP berhasil diaktifkan.", "ok");
+      copyEl.textContent = "Perangkat ini sudah terdaftar untuk menerima notifikasi penting.";
+      allowBtn.classList.add("hidden");
+      closeBtn.disabled = false;
+      closeBtn.textContent = "SELESAI";
+
+      notifyOpener(true, "");
+
+      setTimeout(() => {
+        try { window.close(); } catch (_) {}
+      }, 900);
+
+    } catch (e) {
+      const message = String(e && e.message ? e.message : e || "Gagal mengaktifkan notifikasi.");
+      setStatus(message, "error");
+      allowBtn.disabled = false;
+      allowBtn.textContent = "COBA LAGI";
+      closeBtn.disabled = false;
+      notifyOpener(false, message);
+    }
+  }
+
+  closeBtn.addEventListener("click", () => {
+    try { window.close(); } catch (_) {}
+  });
+
+  allowBtn.addEventListener("click", activate);
+
+  payload = decodePayload();
+
+  if (payload) {
+    // Remove signed token from visible address/history after parsing.
+    try { history.replaceState(null, "", location.pathname); } catch (_) {}
+
+    copyEl.textContent =
+      "Tekan IZINKAN agar informasi penting Outing BMS 2026 dapat muncul di perangkat Anda.";
+    setStatus("Siap meminta izin.");
+    allowBtn.classList.remove("hidden");
+  } else if (location.hash === "#loading=1") {
+    copyEl.textContent = "Menyiapkan aktivasi notifikasi…";
+    setStatus("Mohon tunggu.");
+  }
+})();
+</script>
+</body>
+</html>
