@@ -30,18 +30,17 @@
 
     const run = () => {
       const s = document.createElement("script");
-      s.src = "/push-bridge-v11838.js";
+      s.src = "/push-bridge-v11838.js?v=11842";
       s.async = true;
       s.defer = true;
       document.head.appendChild(s);
     };
 
-    // Push tidak boleh masuk critical path login.
-    if ("requestIdleCallback" in window) {
-      window.requestIdleCallback(run, { timeout: 2500 });
-    } else {
-      window.setTimeout(run, 900);
-    }
+    // V11.8.42:
+    // Bridge tetap di luar critical path login karena fungsi ini dipanggil setelah
+    // iframe load. Setelah login frame siap, muat bridge segera agar tombol
+    // AKTIFKAN tidak menunggu requestIdleCallback.
+    window.setTimeout(run, 0);
   }
 
   /*
