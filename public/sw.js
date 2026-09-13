@@ -1,8 +1,7 @@
-const CACHE_NAME = "outing-bms-netlify-shell-v4-restore-11836";
+const CACHE_NAME = "outing-bms-netlify-shell-v11838";
 const PRECACHE = [
   "/",
   "/styles-v4.css",
-  "/app-v4.js",
   "/manifest-v4.webmanifest",
   "/brand-logo-transparent-v4.png",
   "/apple-touch-icon-v3.png",
@@ -39,6 +38,23 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(() => caches.match("/offline.html"))
+    );
+    return;
+  }
+
+  // JS shell/bridge harus network-first supaya tidak pernah tersangkut versi lama.
+  if (
+    url.pathname === "/app-v4.js" ||
+    url.pathname === "/push-bridge-v11838.js"
+  ) {
+    event.respondWith(
+      fetch(request).then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      }).catch(() => caches.match(request))
     );
     return;
   }
