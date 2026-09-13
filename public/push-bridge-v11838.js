@@ -1,10 +1,35 @@
 (() => {
   "use strict";
 
-  if (window.__OUTING_PUSH_BRIDGE_V11840__) return;
-  window.__OUTING_PUSH_BRIDGE_V11840__ = true;
+  if (window.__OUTING_PUSH_BRIDGE_V11841__) return;
+  window.__OUTING_PUSH_BRIDGE_V11841__ = true;
 
   const getFrame = () => document.getElementById("outingFrame");
+
+  function isTrustedAppsScriptMessage(event) {
+    const frame = getFrame();
+
+    // Direct child frame: fastest/common path.
+    if (frame?.contentWindow && event.source === frame.contentWindow) return true;
+
+    // Google Apps Script HtmlService may execute inside a nested sandbox frame.
+    // In that case event.source is not the direct iframe window, so validate origin.
+    try {
+      const origin = String(event.origin || "");
+      const url = new URL(origin);
+      const host = String(url.hostname || "").toLowerCase();
+
+      if (url.protocol !== "https:") return false;
+
+      return (
+        host === "script.google.com" ||
+        host === "script.googleusercontent.com" ||
+        host.endsWith(".googleusercontent.com")
+      );
+    } catch (_) {
+      return false;
+    }
+  }
 
   function b64ToUint8(base64String) {
     const source = String(base64String || "");
@@ -235,8 +260,7 @@
   }
 
   window.addEventListener("message", async (event) => {
-    const frame = getFrame();
-    if (!frame?.contentWindow || event.source !== frame.contentWindow) return;
+    if (!isTrustedAppsScriptMessage(event)) return;
 
     const data = event.data || {};
 
