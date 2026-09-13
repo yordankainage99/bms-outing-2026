@@ -1,8 +1,8 @@
 (() => {
   "use strict";
 
-  if (window.__OUTING_PUSH_BRIDGE_V11838__) return;
-  window.__OUTING_PUSH_BRIDGE_V11838__ = true;
+  if (window.__OUTING_PUSH_BRIDGE_V11840__) return;
+  window.__OUTING_PUSH_BRIDGE_V11840__ = true;
 
   const getFrame = () => document.getElementById("outingFrame");
 
@@ -38,6 +38,16 @@
       frame.contentWindow.postMessage(payload, "*");
     } catch (_) {}
   }
+
+  // V11.8.40: beri tahu iframe bahwa bridge sudah siap.
+  // Ringan, tanpa network call dan tanpa menyentuh critical login path.
+  window.setTimeout(() => {
+    postToFrame({
+      type: "OUTING_PUSH_BRIDGE_READY",
+      version: "11.8.40",
+      ok: true,
+    });
+  }, 0);
 
   async function getPushRegistration() {
     if (!("serviceWorker" in navigator)) {
